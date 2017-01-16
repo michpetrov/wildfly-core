@@ -29,7 +29,6 @@ import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.ACC
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.ADD;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.AUDIT;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.CONFIGURATION_CHANGES;
-import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.DEPLOYMENT;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.DEPLOYMENT_OVERLAY;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.GROUP;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.HOST;
@@ -74,9 +73,14 @@ import org.jboss.as.controller.OperationContext.AttachmentKey;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.PathElement;
 import org.jboss.as.controller.ProxyController;
+import org.jboss.as.controller.client.helpers.Operations;
 import org.jboss.as.controller.descriptions.ModelDescriptionConstants;
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.COMPOSITE;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.CONTENT;
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.DEPLOYMENT;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.EMPTY;
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.REDEPLOY;
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.STEPS;
 import org.jboss.as.controller.operations.DomainOperationTransformer;
 import org.jboss.as.controller.operations.OperationAttachments;
 import org.jboss.as.controller.operations.common.ResolveExpressionHandler;
@@ -273,7 +277,7 @@ public class ServerOperationResolver {
                     return getServerSocketBindingGroupOperations(operation, address, domain, host);
                 }
                 case SERVER_GROUP: {
-                    return getServerGroupOperations(operation, address, domain, host);
+                    return getServerGroupOperations(context, operation, address, domain, host);
                 }
                 case MANAGMENT_CLIENT_CONTENT: {
                     return Collections.emptyMap();
@@ -499,7 +503,7 @@ public class ServerOperationResolver {
         return ret;
     }
 
-    private Map<Set<ServerIdentity>, ModelNode> getServerGroupOperations(ModelNode operation, PathAddress address,
+    private Map<Set<ServerIdentity>, ModelNode> getServerGroupOperations(OperationContext context, ModelNode operation, PathAddress address,
                                                                          ModelNode domain, ModelNode host) {
         Map<Set<ServerIdentity>, ModelNode> result = null;
         if (address.size() > 1) {
@@ -538,13 +542,28 @@ public class ServerOperationResolver {
             } else if (SYSTEM_PROPERTY.equals(type)) {
                 String affectedGroup = address.getElement(0).getValue();
                 result = getServerSystemPropertyOperations(operation, address, Level.SERVER_GROUP, domain, affectedGroup, host);
-            } else if (DEPLOYMENT_OVERLAY.equals(type) && address.getLastElement().getKey().equals(DEPLOYMENT)) {
+            } else if (DEPLOYMENT_OVERLAY.equals(type)) {
+                ModelNode serverOp = operation.clone();
                 String groupName = address.getElement(0).getValue();
                 Set<ServerIdentity> servers = getServersForGroup(groupName, host, localHostName, serverProxies);
-                ModelNode serverOp = operation.clone();
-                PathAddress serverAddress = address.subAddress(1);
-                serverOp.get(OP_ADDR).set(serverAddress.toModelNode());
-                result = Collections.singletonMap(servers, serverOp);
+                if (address.getLastElement().getKey().equals(DEPLOYMENT)) {
+                    PathAddress serverAddress = address.subAddress(1);
+                    serverOp.get(OP_ADDR).set(serverAddress.toModelNode());
+                    result = Collections.singletonMap(servers, serverOp);
+                } else if (COMPOSITE.equals(operation.get(OP).asString())) { //This should be a redeploy affected transformed operation
+                    Operations.CompositeOperationBuilder builder = Operations.CompositeOperationBuilder.create();
+                    for(ModelNode step : serverOp.get(STEPS).asList()) {
+                        ModelNode newStep = step.clone();
+                        PathAddress serverAddress = PathAddress.pathAddress(step.get(OP_ADDR)).subAddress(1);
+                        newStep.get(OP_ADDR).set(serverAddress.toModelNode());
+                        builder.addStep(newStep);
+                    }
+                    result = Collections.singletonMap(servers, builder.build().getOperation());
+                }else if (REDEPLOY.equals(operation.get(OP).asString())) {
+                    PathAddress serverAddress = address.subAddress(1);
+                    serverOp.get(OP_ADDR).set(serverAddress.toModelNode());
+                    result = Collections.singletonMap(servers, serverOp);
+                }
             }
         } else if (REPLACE_DEPLOYMENT.equals(operation.require(OP).asString())) {
             String groupName = address.getElement(0).getValue();

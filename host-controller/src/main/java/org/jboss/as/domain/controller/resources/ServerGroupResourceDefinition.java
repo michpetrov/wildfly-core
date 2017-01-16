@@ -54,7 +54,6 @@ import org.jboss.as.repository.HostFileRepository;
 import org.jboss.as.server.controller.resources.DeploymentAttributes;
 import org.jboss.as.server.controller.resources.SystemPropertyResourceDefinition;
 import org.jboss.as.server.controller.resources.SystemPropertyResourceDefinition.Location;
-import org.jboss.as.server.deploymentoverlay.DeploymentOverlayDefinition;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.ModelType;
 
@@ -106,6 +105,7 @@ public class ServerGroupResourceDefinition extends SimpleResourceDefinition {
 
     private final HostFileRepository fileRepository;
     private final ContentRepository contentRepository;
+    private final String hostName;
 
     public ServerGroupResourceDefinition(final boolean master, final LocalHostControllerInfo hostInfo,
                                          final HostFileRepository fileRepository) {
@@ -117,6 +117,7 @@ public class ServerGroupResourceDefinition extends SimpleResourceDefinition {
         super(PATH, DomainResolver.getResolver(SERVER_GROUP, false), ServerGroupAddHandler.INSTANCE, new ServerGroupRemoveHandler(hostInfo));
         this.contentRepository = contentRepository;
         this.fileRepository = fileRepository;
+        this.hostName = hostInfo.getLocalHostName();
     }
 
     @Override
@@ -145,7 +146,7 @@ public class ServerGroupResourceDefinition extends SimpleResourceDefinition {
         resourceRegistration.registerSubModel(JvmResourceDefinition.GLOBAL);
         resourceRegistration.registerSubModel(DomainDeploymentResourceDefinition.createForServerGroup(fileRepository, contentRepository));
         resourceRegistration.registerSubModel(SystemPropertyResourceDefinition.createForDomainOrHost(Location.SERVER_GROUP));
-        resourceRegistration.registerSubModel(new DeploymentOverlayDefinition(false, null, null));
+        resourceRegistration.registerSubModel(new DomainDeploymentOverlayDefinition(false, null, null));
     }
 
     @Override
