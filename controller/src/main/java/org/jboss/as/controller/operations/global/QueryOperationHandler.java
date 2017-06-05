@@ -88,10 +88,15 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
             .setRequired(false)
             .build();
 
+    private static final AttributeDefinition FROM_ATT = new SimpleAttributeDefinitionBuilder("from", ModelType.STRING)
+            .setRequired(false)
+            .build();
+
 
     public static final OperationDefinition DEFINITION = new SimpleOperationDefinitionBuilder(ModelDescriptionConstants.QUERY, ControllerResolver.getResolver("global"))
             .addParameter(SELECT_ATT)
             .addParameter(WHERE_ATT)
+            .addParameter(FROM_ATT)
                     //.addParameter(OPERATOR_ATT) // TODO for now it's implicitly Operator.AND
             .setReplyType(ModelType.LIST).setReplyValueType(ModelType.OBJECT)
             .setReadOnly()
@@ -108,6 +113,7 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
         // Use resolveModelAttribute for OPERATOR_ATT to pull out the default value
         final Operator operator = Operator.valueOf(OPERATOR_ATT.resolveModelAttribute(parentContext, operation).asString());
         final ModelNode select = SELECT_ATT.validateOperation(operation);
+        final ModelNode from = FROM_ATT.validateOperation(operation);
 
 
         ImmutableManagementResourceRegistration mrr = parentContext.getResourceRegistration();
@@ -122,7 +128,7 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
         readResourceOp.get(INCLUDE_RUNTIME).set(true);
 
         // filter/reduce phase
-        parentContext.addStep(operation, new FilterReduceHandler(where, operator, select), OperationContext.Stage.MODEL);
+        parentContext.addStep(operation, new FilterReduceHandler(where, operator, select, from), OperationContext.Stage.MODEL);
 
         // map phase
         parentContext.addStep(readResourceOp, readResourceHandler, OperationContext.Stage.MODEL);
@@ -136,11 +142,13 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
         private final ModelNode filter;
         private final Operator operator;
         private final ModelNode select;
+        private final ModelNode from;
 
-        FilterReduceHandler(final ModelNode filter, final Operator operator, final ModelNode select) {
+        FilterReduceHandler(final ModelNode filter, final Operator operator, final ModelNode select, final ModelNode from) {
             this.filter = filter;
             this.operator = operator;
             this.select = select;
+            this.from = from;
         }
 
 
@@ -154,7 +162,34 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
                             if (context.hasResult() || filter.isDefined()) {
                                 ModelNode result = context.getResult();
                                 try {
-                                    filterAndReduce(filter, operator, select, result);
+                                    if (from.isDefined()) {
+                                        ModelNode nodes = result.get(from.asString().split("\\."));
+                                        result.clear();
+                                        if (nodes.getType().equals(ModelType.LIST)) {
+                                            for (int i = 0; i < nodes.asInt(); i++) {
+                                                ModelNode node = nodes.get(i);
+                                                filterAndReduce(filter, operator, select, node);
+                                                if (node.isDefined()) {
+                                                    result.add(node);
+                                                }
+                                            }
+                                        } else if (nodes.getType().equals(ModelType.OBJECT)) {
+                                            for (Property p : nodes.asPropertyList()) {
+                                                ModelNode node = nodes.get(p.getName());
+                                                filterAndReduce(filter, operator, select, node);
+                                                if (node.isDefined()) {
+                                                    result.add(node);
+                                                }
+                                            }
+                                        } else {
+                                            filterAndReduce(filter, operator, select, nodes);
+                                            if (nodes.isDefined()) {
+                                                result.add(nodes);
+                                            }
+                                        }
+                                    } else {
+                                        filterAndReduce(filter, operator, select, result);
+                                    }
                                 } catch (OperationFailedException e) {
                                     if (!context.hasFailureDescription()) {
                                         context.getFailureDescription().set(e.getMessage());
