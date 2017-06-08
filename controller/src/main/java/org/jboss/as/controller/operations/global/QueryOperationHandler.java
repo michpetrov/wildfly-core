@@ -163,28 +163,15 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
                                 ModelNode result = context.getResult();
                                 try {
                                     if (from.isDefined()) {
-                                        ModelNode nodes = result.get(from.asString().split("\\."));
+                                        ModelNode nodes = flattenNestedAttributes(from.asString(), result);
                                         result.clear();
-                                        if (nodes.getType().equals(ModelType.LIST)) {
+                                        if (nodes.isDefined()) {
                                             for (int i = 0; i < nodes.asInt(); i++) {
                                                 ModelNode node = nodes.get(i);
                                                 filterAndReduce(filter, operator, select, node);
                                                 if (node.isDefined()) {
                                                     result.add(node);
                                                 }
-                                            }
-                                        } else if (nodes.getType().equals(ModelType.OBJECT)) {
-                                            for (Property p : nodes.asPropertyList()) {
-                                                ModelNode node = nodes.get(p.getName());
-                                                filterAndReduce(filter, operator, select, node);
-                                                if (node.isDefined()) {
-                                                    result.add(node);
-                                                }
-                                            }
-                                        } else {
-                                            filterAndReduce(filter, operator, select, nodes);
-                                            if (nodes.isDefined()) {
-                                                result.add(nodes);
                                             }
                                         }
                                     } else {
@@ -202,6 +189,40 @@ public final class QueryOperationHandler extends GlobalOperationHandlers.Abstrac
                     }
             );
 
+        }
+
+
+        /*
+         * returns a single list of attributes (ModelNode with ModelType.LIST) or undefined
+         */
+        private static ModelNode flattenNestedAttributes(String from, final ModelNode result) {
+            String[] path = from.split("\\.", 2);
+            ModelNode nodeList = result.get(path[0]);
+
+            if (!nodeList.isDefined()) {
+                return nodeList;
+            }
+
+            if (nodeList.getType().equals(ModelType.LIST) || nodeList.getType().equals(ModelType.OBJECT)) {
+                List<ModelNode> flatList = new ArrayList<>();
+                for (ModelNode node : nodeList.asList()) {
+                    if (path.length == 2) {
+                        node = flattenNestedAttributes(path[1],node);
+                        if (node.isDefined()) {
+                            flatList.addAll(node.asList());
+                        }
+                    } else {
+                        flatList.add(node);
+                    }
+                }
+                nodeList.set(flatList);
+            } else if (path.length == 2) {
+                ModelNode node = flattenNestedAttributes(path[1],nodeList);
+                if (node.isDefined()) {
+                    nodeList.set(node);
+                }
+            }
+            return nodeList;
         }
 
         private static void filterAndReduce(final ModelNode filter, final Operator operator, final ModelNode select, final ModelNode result) throws OperationFailedException {
