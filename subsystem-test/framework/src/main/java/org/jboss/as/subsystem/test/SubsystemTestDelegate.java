@@ -850,6 +850,9 @@ final class SubsystemTestDelegate {
             if (reverseCheckModelFixer != null) {
                 reverseSubsystem = reverseCheckModelFixer.fixModel(reverseSubsystem);
             }
+
+            fixAlternatives(mainServices, PathAddress.pathAddress(SUBSYSTEM, getMainSubsystemName()), reverseSubsystem);
+
             ModelTestUtils.compare(mainServices.readWholeModel().get(SUBSYSTEM, getMainSubsystemName()), reverseSubsystem);
             return reverseServices;
         }
@@ -1170,23 +1173,21 @@ final class SubsystemTestDelegate {
 
         // Process the legacy model
         alternateAttributes.forEach((attributeName, alternates) -> {
-            for (Property legacyResource : legacyModel.asPropertyList()) {
-                final ModelNode m = legacyModel.get(legacyResource.getName());
-                if (m.has(attributeName)) {
+            if (legacyModel.hasDefined(attributeName)) {
                     ModelNode a = attributes.get(attributeName);
                     // If the attribute has a default we need to see if we need to undefine it
                     if (a.hasDefined(DEFAULT)) {
                         // Process each alternative, if one of them is set we need to undefine the attribute
                         // TODO (jrp) note this may mess up values which have no default
                         for (String alternateAttributeName : alternates) {
-                            if (m.hasDefined(alternateAttributeName)) {
-                                m.get(attributeName).set(new ModelNode());
+                            if (legacyModel.hasDefined(alternateAttributeName)) {
+                                legacyModel.get(attributeName).clear();
                                 break;
                             }
                         }
                     }
                 }
-            }
+            //}
         });
 
         // Process the child resources
@@ -1197,12 +1198,19 @@ final class SubsystemTestDelegate {
                     final ModelNode childDescription = child.get(MODEL_DESCRIPTION);
                     for (Property rd : childDescription.asPropertyList()) {
                         if (legacyModel.hasDefined(childResource.getName())) {
-                            fixAlternateAttributes(legacyModel.get(childResource.getName()), rd.getValue());
+                            for (Property ch : legacyModel.get(childResource.getName()).asPropertyList()) {
+                                fixAlternateAttributes(ch.getValue(), rd.getValue());
+                                legacyModel.get(childResource.getName(), ch.getName()).set(ch.getValue());
+                            }
                         } else if (legacyModel.getType() == ModelType.OBJECT) {
                             // Process complex children which are likely resources
                             for (Property p : legacyModel.asPropertyList()) {
                                 if (legacyModel.hasDefined(p.getName(), childResource.getName())) {
                                     fixAlternateAttributes(legacyModel.get(p.getName(), childResource.getName()), rd.getValue());
+                                    for (Property ch : legacyModel.get(p.getName(), childResource.getName()).asPropertyList()) {
+                                        fixAlternateAttributes(ch.getValue(), rd.getValue());
+                                        legacyModel.get(p.getName(), childResource.getName(), ch.getName()).set(ch.getValue());
+                                    }
                                 }
                             }
                         }
